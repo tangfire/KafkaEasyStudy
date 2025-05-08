@@ -1,0 +1,13 @@
+spring:
+  application:
+    # ????
+    name: KafkaEasyStudy
+    # kafka????(ip+??)
+  kafka:
+    bootstrap-servers: localhost:9092
+    # ?????
+    # producer:
+    consumer:
+      auto-offset-reset: earliest
+
+
