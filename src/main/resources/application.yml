@@ -6,8 +6,15 @@ spring:
   kafka:
     bootstrap-servers: localhost:9092
     # ?????
-    # producer:
+    producer:
+      value-serializer: org.springframework.kafka.support.serializer.ToStringSerializer
+#      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+#      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
     consumer:
       auto-offset-reset: earliest
+
+    # 配置模版默认的主题topic名称
+    template:
+      default-topic: default-topic
 
 

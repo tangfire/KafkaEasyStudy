@@ -45,6 +45,9 @@ kafka-consumer-groups.sh --bootstrap-server localhost:9092 --group hello-group -
 # 手动重置偏移量(偏移到最新消息)
 kafka-consumer-groups.sh --bootstrap-server <your-kafka-bootstrap-servers> --group <your-consumer-group> --topic <your-topic> --reset-offsets --to-latest --execute
 
+# 创建topic并指定分区和副本
+kafka-topics.sh --create --topic myTopic --partitions 3 --replication-factor 1 --bootstrap-server localhost:9092
+
 
 
 
