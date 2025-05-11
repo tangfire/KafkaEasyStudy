@@ -960,305 +960,439 @@ Kafka的Replica机制通过多副本冗余、ISR动态同步、Leader选举等�
 
 ---
 
-在Kafka中指定Topic的分区和副本配置，是保障消息系统高可用性、负载均衡及数据可靠性的关键操作。以下是结合最新实践的综合指南：
+# 指定topic的分区和副本
+- 方式一：通过Kafka提供的命令行工具在创建topic时指定分区和副本；
 
----
+```bash
+kafka-topics.sh --create --topic myTopic --partitions 3 --replication-factor 1 --bootstrap-server localhost:9092
+```
 
-### 一、创建Topic时指定分区和副本
-1. **基础命令**  
-   使用`kafka-topics.sh`脚本创建Topic时，可通过参数直接定义分区数和副本因子：
-   ```bash
-   bin/kafka-topics.sh --create --topic my-topic \
-   --partitions 3 \                # 指定分区数为3
-   --replication-factor 2 \        # 每个分区的副本数为2
-   --bootstrap-server localhost:9092
-   ```
-    - **分区数**：影响并行处理能力，需根据消费者数量和吞吐量需求设定。例如，若消费者组有3个实例，建议分区数≥3以实现并行消费。
-    - **副本因子**：建议≥3（生产环境），确保至少2个副本存活时可继续写入（通过`min.insync.replicas=2`配置）。
+- 方式二：执行代码时指定分区和副本；
 
-2. **副本分配策略**  
-   Kafka默认采用**机架感知（Rack-aware）**策略，将Leader和Follower副本分布在不同的Broker和机架上，避免单点故障。例如，3分区2副本的Topic可能分配如下：
-    - Partition 0: Leader在Broker1，Follower在Broker2
-    - Partition 1: Leader在Broker2，Follower在Broker3
-    - Partition 2: Leader在Broker3，Follower在Broker1
+```java
+kafkaTemplate.send("topic", message);
+```
+直接使用send()方法发送消息时，kafka会帮我们自动完成topic的创建工作，但这种情况下创建的topic默认只有一个分区，分区有1个副本，也就是有它自己本身的副本，没有额外的副本备份；
+我们可以在项目中新建一个配置类专门用来初始化topic；
 
----
-
-### 二、动态调整分区与副本
-1. **增加分区数**  
-   Kafka允许通过`--alter`命令增加分区（不可减少）：
-   ```bash
-   bin/kafka-topics.sh --alter --topic my-topic \
-   --partitions 6 \                # 将分区数从3增加到6
-   --bootstrap-server localhost:9092
-   ```
-    - **限制**：新增分区的消息顺序可能与旧分区不一致，需重启消费者以感知新分区。
-
-2. **手动调整副本分布**  
-   若需优化副本分布（如集中存储到特定Broker），可使用`kafka-reassign-partitions.sh`脚本：
-    - **步骤1**：创建副本分配计划（JSON文件）：
-      ```json
-      {
-        "version": 1,
-        "partitions": [
-          {"topic": "my-topic", "partition": 0, "replicas": [1,2]},
-          {"topic": "my-topic", "partition": 1, "replicas": [2,3]}
-        ]
-      }
-      ```
-    - **步骤2**：执行分配计划：
-      ```bash
-      bin/kafka-reassign-partitions.sh --bootstrap-server localhost:9092 \
-      --reassignment-json-file reassign.json --execute
-      ```
-    - **验证**：通过`--verify`参数检查执行状态。
-
----
-
-### 三、管理分区与副本状态
-1. **查看配置详情**
-   ```bash
-   bin/kafka-topics.sh --describe --topic my-topic \
-   --bootstrap-server localhost:9092
-   ```
-   **输出示例**：
-   ```
-   Topic: my-topic Partition: 0 Leader: 1 Replicas: 1,2 Isr: 1,2
-   Topic: my-topic Partition: 1 Leader: 2 Replicas: 2,3 Isr: 2,3
-   ```
-    - **Leader**：当前处理读写请求的副本
-    - **Replicas**：所有副本所在的Broker
-    - **ISR**：与Leader保持同步的副本集合。
-
-2. **监控与容错**
-    - **副本滞后**：若Follower副本长时间未同步（超过`replica.lag.time.max.ms`，默认10秒），会被移出ISR列表。
-    - **Leader选举**：当Leader宕机时，优先从ISR中选择新Leader；若ISR为空且`unclean.leader.election.enable=true`，允许非同步副本成为Leader（可能丢失数据）。
-
----
-
-### 四、生产环境最佳实践
-1. **分区规划**
-    - **经验公式**：分区数 = 目标吞吐量 / 单个分区吞吐量。例如，若单分区支持10MB/s，目标吞吐量100MB/s，则至少需要10个分区。
-    - **上限建议**：单Broker上的分区数≤2000，避免文件句柄和内存消耗过大。
-
-2. **副本配置**
-    - **跨机架部署**：通过`broker.rack`参数配置机架信息，确保副本分布在多个物理机架上。
-    - **读写分离**：Kafka 2.4+支持从Follower副本读取数据（需配置`replica.selector.class=org.apache.kafka.common.replica.RackAwareReplicaSelector`）。
-
----
-
-### 五、常见问题与限制
-1. **不可逆操作**
-    - **分区数**：仅支持增加，不可减少。
-    - **副本因子**：创建后无法直接修改，需通过重新分配或重建Topic实现。
-
-2. **性能权衡**
-    - **高副本数**：提升容错性，但增加网络同步开销。
-    - **过多分区**：可能导致ZooKeeper元数据膨胀，影响选举效率。
-
----
-
-通过合理配置分区分副本，结合监控工具（如Kafka Manager）定期审查集群状态，可构建高性能、高可用的消息系统。具体参数需根据业务负载和集群规模动态调整。
-
-
----
-
-
-在Kafka中，通过代码动态指定分区和副本是开发者常用的高级操作，以下结合最新实践总结多种实现方式及核心要点：
-
----
-
-### 一、通过初始化配置类创建Topic并指定分区和副本（Spring Boot）
-在Spring Boot应用中，可通过配置类在应用启动时自动创建Topic，并指定分区数和副本因子：
 ```java
 @Configuration
 public class KafkaConfig {
     @Bean
-    public NewTopic newTopic() {
-        return new NewTopic("heTopic", 3, (short) 1); // 分区数3，副本因子1（单节点时不可超过Broker数量）
+    public NewTopic topic() {
+        return new NewTopic("firetopic", 9, (short) 1);
     }
 }
 ```
-**关键说明**：
-- **单节点限制**：若集群仅单节点运行，副本因子必须设为1，否则抛出`InvalidReplicationFactorException`。
-- **动态调整**：修改分区数后重启应用即可生效（仅支持增大，不可减少）。
-- **数据保留**：调整分区数不会导致已有数据丢失，新消息按新分区规则写入。
 
----
 
-### 二、生产者发送消息时指定分区
-在Java客户端中，可通过`ProducerRecord`的构造函数显式指定消息的目标分区：
+
+# 生产者发送消息的分区策略
+
+![img_02](./assets/img_2.png)
+
+## 轮询分配策略：RoundRobinPartitioner （接口：Partitioner）
+
+
+![img_03](./assets/img_3.png)
+
+
 ```java
-// 发送到分区0
-ProducerRecord<String, String> record = new ProducerRecord<>("myTopic", 0, "key1", "value1");
-producer.send(record);
-```
-**分区策略优先级**：
-1. **显式指定分区**：直接使用用户指定的分区号（如上述代码）。
-2. **Key哈希分配**：若未指定分区但设置了Key，则通过`hash(key) % numPartitions`计算目标分区。
-3. **粘性分区策略**：当分区和Key均未指定时，Kafka 2.4+采用粘性策略：随机选择一个分区发送一批消息（默认16KB或`linger.ms`超时后切换分区）。
+package com.fire.kafkaeasystudy.config;
 
----
+import com.fasterxml.jackson.databind.ser.std.StringSerializer;
+import org.apache.kafka.clients.admin.NewTopic;
+import org.apache.kafka.clients.producer.ProducerConfig;
+import org.apache.kafka.clients.producer.RoundRobinPartitioner;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.kafka.core.DefaultKafkaProducerFactory;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.core.ProducerFactory;
+import org.springframework.validation.annotation.Validated;
 
-### 三、自定义生产者分区策略
-若需实现业务逻辑的分区分配（如按用户ID分组），可自定义分区器并配置到生产者：
-```java
-public class UserIdPartitioner implements Partitioner {
-    @Override
-    public int partition(String topic, Object key, byte[] keyBytes, Object value, byte[] valueBytes, Cluster cluster) {
-        String userId = (String) key;
-        return userId.hashCode() % cluster.partitionCountForTopic(topic);
+import java.util.HashMap;
+import java.util.Map;
+
+@Configuration
+public class KafkaConfig {
+    @Bean
+    public NewTopic topic() {
+        return new NewTopic("firetopic", 9, (short) 1);
+    }
+
+    @Value("${spring.kafka.bootstrap-servers}")
+    private String bootstrapServers;
+
+    @Value("${spring.kafka.producer.value-serializer}")
+    private String valueSerializer;
+
+    @Value("${spring.kafka.producer.key-serializer}")
+    private String keySerializer;
+
+
+    /**
+     * 生产者相关配置
+     * @return
+     */
+    public Map<String, Object> producerConfigs() {
+        Map<String, Object> props = new HashMap<>();
+        props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG,bootstrapServers);
+        props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, valueSerializer);
+        props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, keySerializer);
+        props.put(ProducerConfig.PARTITIONER_CLASS_CONFIG, RoundRobinPartitioner.class);
+        return props;
+    }
+
+    /**
+     * 生产者创建工厂
+     * @return
+     */
+    public ProducerFactory<String, Object> producerFactory() {
+        return new DefaultKafkaProducerFactory<>(producerConfigs());
+    }
+
+    /**
+     * KafkaTemplate 覆盖默认配置中的kafkaTemplate
+     * @return
+     */
+    @Bean
+    public KafkaTemplate<String, Object> kafkaTemplate() {
+        return new KafkaTemplate<>(producerFactory());
     }
 }
 
-// 配置生产者使用自定义分区器
-properties.put(ProducerConfig.PARTITIONER_CLASS_CONFIG, "com.example.UserIdPartitioner");
 ```
 
----
+```java
+ /**
+     * 看config.KafkaConfig，使用了我们自定义的分区策略，轮询分配策略
+     * config.KafkaConfig:
+     * props.put(ProducerConfig.PARTITIONER_CLASS_CONFIG, RoundRobinPartitioner.class);
+     */
+    public void sendEvent9(){
+        User user  = User.builder().id(1208).phone("1334124124").birthday(new Date()).build();
+        kafkaTemplate2.send("firetopic",user);
+    }
+```
 
-### 四、动态调整分区与副本
-1. **增加分区数**（不可减少）：
-   ```bash
-   bin/kafka-topics.sh --alter --topic myTopic --partitions 6 --bootstrap-server localhost:9092
-   ```
-    - **影响**：新增分区的消息顺序可能与旧分区不一致，需重启消费者感知新分区。
-2. **手动调整副本分布**（如跨机架容灾）：
-    - 使用`kafka-reassign-partitions.sh`脚本结合JSON文件重新分配副本。
-    - 示例JSON文件：
-      ```json
-      {"partitions": [{"topic": "myTopic", "partition": 0, "replicas": [1,2]}], "version":1}
-      ```
 
 ---
 
-### 五、生产环境最佳实践
-1. **副本因子选择**：
-    - 生产环境建议≥3副本，结合`min.insync.replicas=2`确保写入可靠性。
-2. **分区数规划**：
-    - 经验公式：分区数 = 目标吞吐量 / 单分区吞吐量（例如单分区10MB/s，目标100MB/s需≥10分区）。
-    - 单Broker分区数建议≤2000，避免文件句柄和内存耗尽。
-3. **跨机架部署**：
-    - 配置`broker.rack`参数，利用机架感知策略分散副本到不同物理机架。
+## 注意
+
+- kafkaTemplate2：被配置类的 kafkaTemplate 覆盖，使用了自定义的分区器 。
+- kafkaTemplate：未被覆盖，由 Spring Boot 自动配置生成，使用默认参数。
+
+```java
+@Component
+public class EventProducer {
+
+    // 加入了spring-kafka依赖 + .yml配置信息，springboot自动配置好了kafka，自动装配好了KafkaTemplate这个Bean
+    @Resource
+    private KafkaTemplate<String, String> kafkaTemplate;
+
+    @Resource
+    private KafkaTemplate<String, Object> kafkaTemplate2;
+}
+```
+根据你的配置文件和代码分析，**`kafkaTemplate2` 会被配置类的 `kafkaTemplate` 覆盖，而 `kafkaTemplate` 可能未被覆盖**，具体原因如下：
 
 ---
 
-### 六、常见问题与规避方案
-1. **分区倾斜**：
-    - **现象**：某些分区负载过高导致性能瓶颈。
-    - **解决**：采用轮询或粘性策略分散写入，或通过`kafka-reassign-partitions.sh`手动均衡。
-2. **副本同步滞后**：
-    - **监控**：通过`kafka-topics.sh --describe`检查ISR列表，移除滞后副本。
-    - **调优**：增大`replica.lag.time.max.ms`（默认10秒）容忍网络波动。
+### 一、**`kafkaTemplate2` 的覆盖逻辑**
+1. **Bean 名称与类型匹配**  
+   你的配置类中定义了一个 `@Bean` 方法 `kafkaTemplate()`，返回类型是 `KafkaTemplate<String, Object>`，且未指定 Bean 名称。根据 Spring 默认规则，Bean 的名称由方法名决定（即 `kafkaTemplate`），类型为 `KafkaTemplate<String, Object>`。
+    - **在 `EventProducer` 中，`kafkaTemplate2` 的注入字段类型是 `KafkaTemplate<String, Object>`**，与配置类的 `kafkaTemplate` Bean 类型完全匹配。
+    - **Spring 会优先按名称匹配**，但此处 `kafkaTemplate2` 字段名与 Bean 名称 `kafkaTemplate` 不一致，因此会尝试按类型匹配。由于配置类中的 Bean 是唯一的 `KafkaTemplate<String, Object>` 实例，因此 `kafkaTemplate2` 会被注入配置类的 `kafkaTemplate`。
+
+2. **验证方法**  
+   你可以在 `kafkaTemplate2` 发送消息时观察以下行为：
+    - 如果消息发送的分区策略是 `CustomerPartitioner`（而非默认策略），说明 `kafkaTemplate2` 确实使用了配置类的 `kafkaTemplate`。
+    - 如果消息发送时触发了 `CustomerProducerInterceptor` 拦截器，也验证了这一点。
 
 ---
 
-通过代码灵活控制分区和副本，结合Kafka的自动化机制，可构建高吞吐、高可用的消息系统。实际应用中需根据业务场景权衡数据一致性、性能及运维复杂度。
+### 二、**`kafkaTemplate` 的注入逻辑**
+1. **类型不匹配导致自动配置生效**
+    - `EventProducer` 中的 `kafkaTemplate` 字段类型是 `KafkaTemplate<String, String>`，而配置类的 `kafkaTemplate()` 方法返回的是 `KafkaTemplate<String, Object>`。**泛型类型不一致会导致 Spring 认为这是两个不同的 Bean**。
+    - 因此，`kafkaTemplate` 字段会由 Spring Boot 的自动配置生成，而非你的自定义配置类。这意味着它会使用默认的序列化器（如 `StringSerializer`）和默认的分区策略（如 `DefaultPartitioner`）。
+
+2. **验证方法**
+    - 如果 `kafkaTemplate` 发送消息时未触发 `CustomerProducerInterceptor` 拦截器，或者分区策略是默认的（而非 `CustomerPartitioner`），则说明它未被配置类覆盖。
 
 ---
 
-Kafka生产者发送消息的分区策略决定了消息如何分配到不同分区，直接影响数据分布、负载均衡和消费顺序。以下是核心策略及适用场景的详细解析：
-
----
-
-### 一、默认分区策略
-1. **轮询策略（Round-robin）**
-    - **机制**：当消息未指定Key且未显式选择分区时，Kafka依次将消息轮流分配到各分区（例如分区0→1→2→0循环）。
-    - **优点**：负载均衡效果最佳，适合无顺序要求的高吞吐场景。
-    - **示例**：
-      ```java
-      // 无Key时默认轮询（旧版本）或粘性策略（Kafka 2.4+）
-      ProducerRecord<String, String> record = new ProducerRecord<>("topic", "value");
-      ```
-
-2. **基于Key的哈希策略**
-    - **机制**：若消息指定Key，Kafka通过`murmur2`哈希算法计算Key的哈希值，对分区数取模确定目标分区。
-    - **优点**：保证相同Key的消息进入同一分区，维持局部顺序性（如用户行为日志）。
-    - **示例**：
-      ```java
-      ProducerRecord<String, String> record = new ProducerRecord<>("topic", "user123", "value");
-      ```
-
----
-
-### 二、粘性分区策略（Kafka 2.4+）
-- **触发条件**：未指定分区且未设置Key时自动启用。
-- **机制**：
-    1. **随机选择初始分区**：首次发送时随机选一个分区。
-    2. **批次粘性**：持续向该分区发送消息，直到批次大小达到`batch.size`（默认16KB）或等待时间超过`linger.ms`（默认0ms）。
-    3. **动态切换**：满足条件后切换至另一随机分区，避免单个分区过载。
-- **优点**：减少分区切换开销，提升吞吐量（相比纯轮询）。
-
----
-
-### 三、自定义分区策略
-通过实现`Partitioner`接口，可完全控制分区逻辑，适用于复杂业务场景：
-1. **实现步骤**：
-    - 创建类实现`Partitioner`接口，重写`partition()`方法。
-    - 配置生产者使用自定义分区器：
-      ```java
-      props.put(ProducerConfig.PARTITIONER_CLASS_CONFIG, "com.example.CustomPartitioner");
-      ```
-
-2. **典型场景**：
-    - **时间窗口分区**：按消息时间戳分配到不同分区（如按小时分区）。
-    - **业务字段分区**：根据业务ID、地理位置等字段划分逻辑。
-    - **均匀分布优化**：避免哈希倾斜，手动平衡分区负载。
-
-3. **示例代码**：
+### 三、**如何解决冲突**
+#### 方案 1：通过 `@Qualifier` 明确指定 Bean
+1. **修改配置类**  
+   为不同的 `KafkaTemplate` 指定名称，例如：
    ```java
-   public class TimeBasedPartitioner implements Partitioner {
-       @Override
-       public int partition(String topic, Object key, byte[] keyBytes, 
-                            Object value, byte[] valueBytes, Cluster cluster) {
-           List<PartitionInfo> partitions = cluster.partitionsForTopic(topic);
-           long timestamp = System.currentTimeMillis();
-           return (int) (timestamp % partitions.size());
-       }
+   @Bean("customKafkaTemplate")
+   public KafkaTemplate<String, Object> kafkaTemplate() {
+       return new KafkaTemplate<>(producerFactory());
    }
    ```
+2. **在 `EventProducer` 中注入**
+   ```java
+   @Resource
+   @Qualifier("customKafkaTemplate")
+   private KafkaTemplate<String, Object> kafkaTemplate2;
+   ```
+
+#### 方案 2：完全禁用自动配置
+在 `application.yml` 中添加以下配置，禁用 Spring Boot 的自动生成 `KafkaTemplate`：
+```yaml
+spring:
+  kafka:
+    template:
+      default-type: none
+```
+此时所有 `KafkaTemplate` 必须通过自定义配置类定义。
 
 ---
 
-### 四、显式指定分区
-通过`ProducerRecord`构造函数直接指定目标分区，完全绕过策略逻辑：
-- **适用场景**：需强制固定分区（如调试、特殊业务规则）。
-- **风险**：需自行管理分区分布，可能导致负载不均。
-- **示例**：
-  ```java
-  // 强制发送到分区2
-  ProducerRecord<String, String> record = new ProducerRecord<>("topic", 2, null, "value");
-  ```
+### 四、**当前代码的风险点**
+1. **泛型类型混淆**  
+   配置类的 `kafkaTemplate` 是 `KafkaTemplate<String, Object>`，而 `kafkaTemplate2` 字段的泛型类型与之匹配，导致意外覆盖。建议统一泛型类型或通过 `@Qualifier` 隔离。
+
+2. **拦截器和分区器冲突**  
+   如果 `kafkaTemplate`（自动配置）和 `kafkaTemplate2`（自定义配置）使用不同的序列化器或分区策略，可能导致消息发送异常。
 
 ---
 
-### 五、策略选择建议
-| **场景**                | **推荐策略**              | **注意事项**                          |
-|-------------------------|--------------------------|---------------------------------------|
-| 高吞吐无顺序要求        | 轮询/粘性策略            | Kafka 2.4+优先粘性策略         |
-| 需保证Key顺序性         | Key哈希策略              | 避免频繁Key变更导致分区倾斜     |
-| 复杂业务逻辑分区        | 自定义分区器             | 需测试分区均衡性               |
-| 调试或强制分区分配      | 显式指定分区             | 谨慎使用，可能破坏负载均衡      |
+### 总结
+- **`kafkaTemplate2`**：被配置类的 `kafkaTemplate` 覆盖，使用了自定义的分区器和拦截器。
+- **`kafkaTemplate`**：未被覆盖，由 Spring Boot 自动配置生成，使用默认参数。
+- **建议**：通过 `@Qualifier` 或禁用自动配置明确区分不同 `KafkaTemplate`，避免隐式依赖导致问题。
 
----
 
-### 六、高级配置与调优
-1. **批次优化**：
-    - 增大`batch.size`（如32KB）和`linger.ms`（如50ms）提升吞吐，但增加延迟。
-2. **压缩配置**：
-    - 启用`compression.type`（如`lz4`）减少网络带宽占用。
-3. **重试与容错**：
-    - 设置`retries=3`和`retry.backoff.ms=100`应对临时故障。
-
----
-
-通过灵活组合上述策略，开发者可优化Kafka生产端的性能、可靠性与业务适配性。实际应用中需结合监控工具（如Kafka Manager）持续观察分区负载，动态调整策略。
 
 
 ---
 
 
+## 自定义分配策略：XxxPartitioner （接口：Partitioner）
 
+![img_04](./assets/img_4.png)
+
+```java
+props.put(ProducerConfig.PARTITIONER_CLASS_CONFIG, CustomerPartitioner.class);
+```
+
+```java
+package com.fire.kafkaeasystudy.config;
+
+import org.apache.kafka.clients.producer.Partitioner;
+import org.apache.kafka.common.Cluster;
+import org.apache.kafka.common.PartitionInfo;
+import org.apache.kafka.common.utils.Utils;
+
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
+
+public class CustomerPartitioner implements Partitioner {
+
+    private AtomicInteger nextPartition = new AtomicInteger(0);
+    
+    @Override
+    public int partition(String topic, Object key, byte[] keyBytes, Object value, byte[] valueBytes, Cluster cluster) {
+        List<PartitionInfo> partitions = cluster.partitionsForTopic(topic);
+        int numPartitions = partitions.size();
+        if (key == null){
+            // 使用轮询方式选择分区
+            int next = nextPartition.getAndIncrement();
+            if (next >= numPartitions){
+                nextPartition.compareAndSet(next,0);
+            }
+            return next;
+        }else{
+            // 如果key不为null,则使用默认的分区策略
+            return Utils.toPositive(Utils.murmur2(keyBytes) % numPartitions);
+        }
+    }
+
+    @Override
+    public void close() {
+
+    }
+
+    @Override
+    public void configure(Map<String, ?> configs) {
+
+    }
+}
+
+```
+
+
+# 生产者发送消息的流程
+
+![img_05](./assets/img_5.png)
+
+
+# 拦截生产者发送的消息
+
+Kafka 拦截器（Interceptors）是一种允许用户在消息生产或消费的关键阶段插入自定义逻辑的插件机制，其核心思想是在不修改主业务逻辑的前提下实现可插拔的动态处理链。以下是 Kafka 拦截器的核心要点：
+
+![img_06](./assets/img_6.png)
+
+---
+
+### **一、拦截器类型与核心接口**
+Kafka 拦截器分为 **生产者拦截器** 和 **消费者拦截器**，分别作用于消息发送和消费的不同阶段：
+1. **生产者拦截器（ProducerInterceptor）**
+    - **接口方法**：
+        - `onSend(ProducerRecord)`：在消息序列化、计算分区前调用，可修改消息内容或添加头信息。
+        - `onAcknowledgement(RecordMetadata, Exception)`：在消息成功提交或失败时调用（早于用户回调），用于统计成功率、记录日志等。
+        - `close()`：关闭拦截器时清理资源。
+    - **典型场景**：消息加密、添加时间戳、统计发送成功率。
+
+2. **消费者拦截器（ConsumerInterceptor）**
+    - **接口方法**：
+        - `onConsume(ConsumerRecords)`：在消息反序列化后、正式消费前调用，可过滤或修改消息。
+        - `onCommit(Map<TopicPartition, OffsetAndMetadata>)`：在提交位移后调用，用于记录提交状态或审计。
+    - **典型场景**：消息解密、过滤无效数据、统计消费延迟。
+
+---
+
+### **二、拦截器的使用步骤**
+1. **实现接口**  
+   创建自定义类实现 `ProducerInterceptor` 或 `ConsumerInterceptor` 接口，重写核心方法。  
+   **示例**（生产者统计消息成功率）：
+   ```java
+   public class CountProducerInterceptor implements ProducerInterceptor<String, String> {
+       private Jedis jedis; // 使用 Redis 记录统计信息
+       @Override
+       public ProducerRecord<String, String> onSend(ProducerRecord record) {
+           jedis.incr("totalMessages");
+           return record;
+       }
+       @Override
+       public void onAcknowledgement(RecordMetadata metadata, Exception e) {
+           if (e == null) jedis.incr("successMessages");
+           else jedis.incr("failedMessages");
+       }
+   } 
+   ```
+
+2. **配置拦截器**  
+   在生产者/消费者配置中通过 `interceptor.classes` 指定拦截器全限定类名，支持多个拦截器链式调用：
+   ```java
+   Properties props = new Properties();
+   List<String> interceptors = new ArrayList<>();
+   interceptors.add("com.example.CountProducerInterceptor");
+   interceptors.add("com.example.TimestampInterceptor");
+   props.put(ProducerConfig.INTERCEPTOR_CLASSES_CONFIG, interceptors); 
+   ```
+
+3. **启用拦截器**  
+   将配置传递给 `KafkaProducer` 或 `KafkaConsumer` 实例，拦截器自动生效。
+
+---
+
+### **三、典型应用场景**
+1. **监控与统计**
+    - 记录消息端到端延迟、TPS、成功率等指标。
+    - 示例：通过 `onSend` 记录发送时间戳，`onAcknowledgement` 计算处理延迟。
+
+2. **消息审计与安全**
+    - 多租户环境下追踪消息来源，防止数据泄露。
+    - 示例：在消息头中添加审计标识（如租户ID）。
+
+3. **消息内容处理**
+    - 加密/解密、压缩/解压、格式转换（如添加统一前缀）。
+    - 示例：在 `onConsume` 中过滤不符合业务规则的消息。
+
+4. **性能优化**
+    - 在拦截器中预计算数据，减少主业务逻辑复杂度。
+
+---
+
+### **四、注意事项**
+1. **线程安全**
+    - `onSend` 和 `onAcknowledgement` 可能运行在不同线程中，共享变量需保证线程安全。
+
+2. **性能影响**
+    - 避免在拦截器中执行耗时操作（如同步数据库写入），否则会降低 Kafka 吞吐量。
+
+3. **版本兼容性**
+    - 拦截器功能自 Kafka 0.10.0.0 引入，需确保客户端与 Broker 版本兼容。
+
+4. **配置正确性**
+    - 拦截器类名需使用全限定名（如 `com.example.MyInterceptor`），否则会因类加载失败导致异常。
+
+---
+
+### **五、总结**
+Kafka 拦截器通过灵活的事件钩子机制，为用户提供了扩展消息处理能力的途径，尤其适用于需要统一监控、审计或内容处理的场景。使用时需注意性能与线程安全问题，合理设计拦截器逻辑以实现业务目标。
+
+---
+
+
+## 示例
+```java
+package com.fire.kafkaeasystudy.config;
+
+import org.apache.kafka.clients.producer.ProducerInterceptor;
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.clients.producer.RecordMetadata;
+
+import java.util.Map;
+
+public class CustomerProducerInterceptor implements ProducerInterceptor<String,Object> {
+
+    /**
+     * 发送消息时，会先调用该方法，对消息进行拦截，可以在拦截中对消息做一些处理，记录日志等操作......
+     * @param record the record from client or the record returned by the previous interceptor in the chain of interceptors.
+     * @return
+     */
+    @Override
+    public ProducerRecord<String,Object> onSend(ProducerRecord record) {
+        System.out.println("拦截消息" + record.toString());
+        return record;
+    }
+
+    /**
+     * 服务器收到消息后的一个确认
+     * @param metadata The metadata for the record that was sent (i.e. the partition and offset).
+     *                 If an error occurred, metadata will contain only valid topic and maybe
+     *                 partition. If partition is not given in ProducerRecord and an error occurs
+     *                 before partition gets assigned, then partition will be set to RecordMetadata.NO_PARTITION.
+     *                 The metadata may be null if the client passed null record to
+     *                 {@link org.apache.kafka.clients.producer.KafkaProducer#send(ProducerRecord)}.
+     * @param exception The exception thrown during processing of this record. Null if no error occurred.
+     */
+    @Override
+    public void onAcknowledgement(RecordMetadata metadata, Exception exception) {
+        if (metadata != null) {
+            System.out.println("服务器收到该消息: " + metadata.offset());
+        }else{
+            System.out.println("消息发送失败了,exception:" + exception.getMessage());
+        }
+    }
+
+    @Override
+    public void close() {
+
+    }
+
+    @Override
+    public void configure(Map<String, ?> configs) {
+
+    }
+}
+
+```
+
+```java
+// 添加一个拦截器
+props.put(ProducerConfig.INTERCEPTOR_CLASSES_CONFIG, CustomerProducerInterceptor.class.getName());
+```
+
+---
 
 
 

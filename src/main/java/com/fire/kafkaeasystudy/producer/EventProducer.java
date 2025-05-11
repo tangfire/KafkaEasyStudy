@@ -6,6 +6,7 @@ import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.header.Header;
 import org.apache.kafka.common.header.Headers;
 import org.apache.kafka.common.header.internals.RecordHeaders;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.KafkaHeaders;
 import org.springframework.kafka.support.SendResult;
@@ -130,6 +131,17 @@ public class EventProducer {
 
         kafkaTemplate2.sendDefault(null,System.currentTimeMillis(),"k4",user);
     }
+
+    /**
+     * 看config.KafkaConfig，使用了我们自定义的分区策略，轮询分配策略
+     * config.KafkaConfig:
+     * props.put(ProducerConfig.PARTITIONER_CLASS_CONFIG, RoundRobinPartitioner.class);
+     */
+    public void sendEvent9(){
+        User user  = User.builder().id(1208).phone("1334124124").birthday(new Date()).build();
+        kafkaTemplate2.send("firetopic",user);
+    }
+
 
 
 

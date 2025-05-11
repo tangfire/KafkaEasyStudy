@@ -1,5 +1,6 @@
 package com.fire.kafkaeasystudy.config;
 
+import com.fasterxml.jackson.databind.ser.std.StringSerializer;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.RoundRobinPartitioner;
@@ -27,6 +28,9 @@ public class KafkaConfig {
     @Value("${spring.kafka.producer.value-serializer}")
     private String valueSerializer;
 
+    @Value("${spring.kafka.producer.key-serializer}")
+    private String keySerializer;
+
 
     /**
      * 生产者相关配置
@@ -36,7 +40,12 @@ public class KafkaConfig {
         Map<String, Object> props = new HashMap<>();
         props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG,bootstrapServers);
         props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, valueSerializer);
-        props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, RoundRobinPartitioner.class);
+        props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, keySerializer);
+//        props.put(ProducerConfig.PARTITIONER_CLASS_CONFIG, RoundRobinPartitioner.class);
+        props.put(ProducerConfig.PARTITIONER_CLASS_CONFIG, CustomerPartitioner.class);
+        // 添加一个拦截器
+        props.put(ProducerConfig.INTERCEPTOR_CLASSES_CONFIG, CustomerProducerInterceptor.class.getName());
+
         return props;
     }
 

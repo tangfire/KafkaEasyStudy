@@ -10,4 +10,10 @@ public class EventConsumer {
     public void onEvent(String event) {
         System.out.println("读取的事件："+event);
     }
+
+    // 采用监听的方式接收事件(消息、数据)
+    @KafkaListener(topics = {"helloTopic"},groupId = "helloGroup")
+    public void onEvent2(String event) {
+        System.out.println("读取的事件："+event);
+    }
 }
