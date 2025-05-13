@@ -48,6 +48,8 @@ kafka-consumer-groups.sh --bootstrap-server <your-kafka-bootstrap-servers> --gro
 # 创建topic并指定分区和副本
 kafka-topics.sh --create --topic myTopic --partitions 3 --replication-factor 1 --bootstrap-server localhost:9092
 
+# 查消费者组的情况
+kafka-consumer-groups.sh --bootstrap-server localhost:9092 --group offsetGroup --describe
 
 
 
