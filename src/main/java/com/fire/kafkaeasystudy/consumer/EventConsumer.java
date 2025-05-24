@@ -11,4 +11,7 @@ public class EventConsumer {
         System.out.println("读取的事件："+event);
     }
 
+
+
+
 }
